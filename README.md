@@ -2,8 +2,6 @@
 
 A Pine Script v6 indicator for XAUUSD. It builds a ladder of support and resistance zones from one anchor zone and a fixed pitch, then marks a long or short entry when five rules pass on a closed bar.
 
-![Sell signal on the XAUUSD 2H chart](docs/images/sell-signal-2h.png)
-
 ---
 
 AI has changed how I build automated retail trading strategies.
@@ -53,10 +51,6 @@ AI speeds up implementation. You still have to understand the system you're buil
 | Entry alerts | One push notification per signal with entry, zone, stop and a lot size, locked to one chart timeframe. |
 
 `pine/chop filter.pine` is a companion script that plots the Choppiness Index in its own pane. It colours the line with the same rule the entry uses, so the line turns red on the same bars the filter blocks.
-
-![Buy signals on the XAUUSD 2H chart](docs/images/buy-signals-2h.png)
-
-*Both screenshots come from the XAUUSD 2H chart on OANDA data. The table shows the state of the latest bar, not the bar under the marker.*
 
 ## The zones
 
@@ -170,8 +164,7 @@ An alert keeps running the script version that existed when you created it. Afte
 │   └── chop filter.pine            Choppiness Index pane
 └── docs/
     ├── methodology.md        formal rules, proofs, worked examples
-    ├── research notes.md     backtest numbers, failed ideas, bugs
-    └── images/
+    └── research notes.md     backtest numbers, failed ideas, bugs
 ```
 
 ## License

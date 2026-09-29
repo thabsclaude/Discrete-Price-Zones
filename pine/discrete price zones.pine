@@ -1,7 +1,6 @@
 //@version=6
 // Discrete Price Zones, by Thabo Claude Chipokolo
 // Pine twin of the MT5 entry logic. Plots the zone ladder, the SMMA,
-// and BUY/SELL markers where all entry rules align. Defaults = launched profitable set.
 // APPLY ON THE 15m CHART (the strategy's execution timeframe).
 indicator("Discrete Price Zones", overlay=true, max_boxes_count=500, max_labels_count=500)
 

@@ -1,0 +1,35 @@
+//@version=6
+// Discrete Price Zones: chop filter pane, companion to discrete price zones.pine.
+// Same CHOP rule the strategy uses: no-trade when CHOP >= threshold OR rising.
+// Colour matches the dashboard: green = tradeable, red = no-trade (choppy/rising).
+indicator("Discrete Price Zones: Chop Filter", overlay=false)
+
+chopPeriod = input.int(14,    "CHOP period", minval=2)
+chopThresh = input.float(50.5,"No-trade threshold (>=)")
+showBands  = input.bool(true, "Show 38.2 / 61.8 reference bands")
+
+// Choppiness Index (identical formula to the EA / dashboard)
+rng  = ta.highest(high, chopPeriod) - ta.lowest(low, chopPeriod)
+chop = rng > 0 ? 100.0 * math.log10(math.sum(ta.tr(true), chopPeriod) / rng) / math.log10(chopPeriod) : na
+
+// strategy gate: tradeable only if below threshold AND not rising
+chopUp = not na(chop) and not na(chop[1]) and chop > chop[1]
+noTrade = na(chop) or chop >= chopThresh or chopUp
+chopCol = na(chop) ? color.new(color.gray,0) : noTrade ? color.new(#ef5350,0) : color.new(#26a69a,0)
+
+plot(chop, "Choppiness Index", color=chopCol, linewidth=2)
+hline(chopThresh, "No-trade >=", color=color.new(#ef5350,0), linestyle=hline.style_dashed, linewidth=1)
+
+hTop = hline(showBands ? 61.8 : na, "Choppy band", color=color.new(color.gray,70), linestyle=hline.style_dotted)
+hBot = hline(showBands ? 38.2 : na, "Trend band",  color=color.new(color.gray,70), linestyle=hline.style_dotted)
+fill(hTop, hBot, color=color.new(color.gray,94), title="mid-band")
+
+// small state readout
+var label tag = na
+if barstate.islast
+    label.delete(tag)
+    txt = na(chop) ? "n/a" : str.tostring(chop,"0.0") + (chopUp?"  RISING":"  falling") + (noTrade?"   NO-TRADE":"   TRADEABLE")
+    tag := label.new(bar_index, chop, txt, style=label.style_label_left, color=color.new(#12161c,0), textcolor=chopCol, size=size.small)
+
+alertcondition(not noTrade and noTrade[1], "CHOP turns tradeable", "CHOP filter now allows trades")
+alertcondition(noTrade and not noTrade[1], "CHOP turns no-trade", "CHOP filter now blocks trades")

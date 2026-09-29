@@ -1,0 +1,250 @@
+//@version=6
+// Discrete Price Zones, by Thabo Claude Chipokolo
+// Pine twin of the MT5 entry logic. Plots the zone ladder, the SMMA,
+// and BUY/SELL markers where all entry rules align. Defaults = launched profitable set.
+// APPLY ON THE 15m CHART (the strategy's execution timeframe).
+indicator("Discrete Price Zones", overlay=true, max_boxes_count=500, max_labels_count=500)
+
+// ================= Inputs (defaults = launched .set) =================
+grpZ = "Zones"
+anchorLower  = input.float(3976.22, "Anchor lower line", step=0.01, group=grpZ)
+anchorUpper  = input.float(3978.86, "Anchor upper line", step=0.01, group=grpZ)
+gap          = input.float(14.86,   "Gap between zones", step=0.01, group=grpZ)
+zonesEachWay = input.int(60, "Zones drawn each way", minval=1, maxval=240, group=grpZ)
+
+grpF = "Filters / Signal"
+maPeriod   = input.int(9,     "SMMA period (all TFs)", minval=1, group=grpF)
+chopThresh = input.float(50.5,"CHOP block if >=",       group=grpF)
+chopPeriod = input.int(14,    "CHOP period",            minval=2, group=grpF)
+zoneTol    = input.float(0.55,"Zone retest tolerance",  group=grpF)
+maTol      = input.float(1.56,"SMMA retest tolerance",  group=grpF)
+lateMax    = input.float(49.5,"Late-entry max (points)",group=grpF)
+
+grpS = "Style"
+showZones  = input.bool(true, "Show zones",      group=grpS)
+showSMMA   = input.bool(true, "Show SMMA",        group=grpS)
+showSignals= input.bool(true, "Show BUY/SELL",    group=grpS)
+tintSignal = input.bool(true, "Tint signal bars", group=grpS)
+fillCol    = input.color(color.new(#8e44ad, 82), "Zone fill",   group=grpS)
+borderCol  = input.color(color.new(#8e44ad, 45), "Zone border", group=grpS)
+maCol      = input.color(color.new(#7e57c2, 0),  "SMMA color",  group=grpS)
+
+// ================= SMMA (chart TF = 15m) =================
+smma = ta.rma(close, maPeriod)
+
+// ================= HTF trend: 15m close vs 1H & 4H SMMA =================
+// (matches EA HtfTrend: current price compared to the higher-TF SMMAs)
+smma1H = request.security(syminfo.tickerid, "60",  ta.rma(close, maPeriod), lookahead=barmerge.lookahead_off)
+smma4H = request.security(syminfo.tickerid, "240", ta.rma(close, maPeriod), lookahead=barmerge.lookahead_off)
+htfUp   = close > smma1H and close > smma4H
+htfDown = close < smma1H and close < smma4H
+
+// ================= Choppiness Index (chart TF) =================
+rng  = ta.highest(high, chopPeriod) - ta.lowest(low, chopPeriod)
+chop = rng > 0 ? 100.0 * math.log10(math.sum(ta.tr(true), chopPeriod) / rng) / math.log10(chopPeriod) : na
+// tradeable: below threshold AND not rising (matches EA: chop < thresh && chop <= prior)
+chopOK = not na(chop) and not na(chop[1]) and chop < chopThresh and chop <= chop[1]
+
+// ================= 15m SMMA break-retest =================
+bullMA = close > smma and low  <= smma + maTol and close[1] > smma[1]
+bearMA = close < smma and high >= smma - maTol and close[1] < smma[1]
+
+// ================= Zone geometry =================
+height = anchorUpper - anchorLower
+pitch  = gap + height
+
+// BUY: zone whose upper line we just closed above
+kB  = math.floor((close - anchorUpper) / pitch)
+zUB = anchorUpper + pitch * kB
+zLB = anchorLower + pitch * kB
+bullZone = close > zUB and low <= zUB + zoneTol
+notLateB = (close - zUB) < lateMax
+
+// SELL: zone whose lower line we just closed below
+kS  = math.ceil((close - anchorLower) / pitch)
+zLS = anchorLower + pitch * kS
+zUS = anchorUpper + pitch * kS
+bearZone = close < zLS and high >= zLS - zoneTol
+notLateS = (zLS - close) < lateMax
+
+// ================= Final signals =================
+buySignal  = showSignals and htfUp   and bullMA and bullZone and notLateB and chopOK
+sellSignal = showSignals and htfDown and bearMA and bearZone and notLateS and chopOK
+
+// ================= Plots =================
+plot(showSMMA ? smma : na, "SMMA", color=maCol, linewidth=2)
+
+plotshape(buySignal,  "BUY signal",  shape.triangleup,   location.belowbar, color.new(color.green, 0), size=size.small, text="BUY",  textcolor=color.white)
+plotshape(sellSignal, "SELL signal", shape.triangledown, location.abovebar, color.new(color.red,   0), size=size.small, text="SELL", textcolor=color.white)
+
+bgcolor(tintSignal and buySignal  ? color.new(color.green, 88) : na)
+bgcolor(tintSignal and sellSignal ? color.new(color.red,   88) : na)
+
+alertcondition(buySignal,  "DPZ BUY",  "DPZ buy signal on {{ticker}} {{interval}}")
+alertcondition(sellSignal, "DPZ SELL", "DPZ sell signal on {{ticker}} {{interval}}")
+
+// ================= Zone ladder (auto-centered, full width) =================
+var boxes = array.new_box()
+if showZones and barstate.islast
+    for b in boxes
+        box.delete(b)
+    array.clear(boxes)
+    kC = math.round((close - anchorLower) / pitch)
+    for i = -zonesEachWay to zonesEachWay
+        k  = kC + i
+        lo = anchorLower + pitch * k
+        up = anchorUpper + pitch * k
+        array.push(boxes, box.new(bar_index, up, bar_index + 1, lo, border_color=borderCol, bgcolor=fillCol, border_width=1, extend=extend.both))
+
+// ================= Timeframe reminder =================
+var label warn = na
+if barstate.islast
+    label.delete(warn)
+    if timeframe.period != "15"
+        warn := label.new(bar_index, high, "Parameters tuned on the 15m chart (current: " + timeframe.period + ")", color=color.new(color.red, 15), textcolor=color.white, style=label.style_label_down, size=size.small)
+
+// ================= PROFESSIONAL DASHBOARD =================
+grpD = "Dashboard"
+showDash = input.bool(true,  "Show dashboard",  group=grpD)
+dashPos  = input.string("Top Right", "Position", options=["Top Right","Top Left","Bottom Right","Bottom Left","Middle Right"], group=grpD)
+dashSize = input.string("Small", "Text size", options=["Tiny","Small","Normal"], group=grpD)
+
+// palette
+cGold = color.new(#d4af37, 0)
+cDim  = color.new(#8c96a5, 0)
+cTxt  = color.new(#e1e6ee, 0)
+cGrn  = color.new(#26a69a, 0)
+cRed  = color.new(#ef5350, 0)
+cHdr  = color.new(#1e242e, 0)
+cBg   = color.new(#12161c, 0)
+
+// position / size resolved from inputs (global, before helpers use them)
+_pos = switch dashPos
+    "Top Left"      => position.top_left
+    "Bottom Right"  => position.bottom_right
+    "Bottom Left"   => position.bottom_left
+    "Middle Right"  => position.middle_right
+    => position.top_right
+_sz = dashSize == "Tiny" ? size.tiny : dashSize == "Normal" ? size.normal : size.small
+
+// ---- derived state (read from the strategy logic above) ----
+dir15 = close > smma   ? 1 : close < smma   ? -1 : 0
+dir1H = close > smma1H ? 1 : close < smma1H ? -1 : 0
+dir4H = close > smma4H ? 1 : close < smma4H ? -1 : 0
+biasDir = htfUp ? 1 : htfDown ? -1 : 0
+
+chopRising = not na(chop) and not na(chop[1]) and chop > chop[1]
+
+actUp    = biasDir < 0 ? zUS : zUB
+actLo    = biasDir < 0 ? zLS : zLB
+pxVsLine = biasDir < 0 ? (close - zLS) : (close - zUB)
+pxVsSMMA = close - smma
+
+cTrend = biasDir != 0
+cChop  = chopOK
+cSMMA  = biasDir > 0 ? bullMA   : biasDir < 0 ? bearMA   : false
+cZone  = biasDir > 0 ? bullZone : biasDir < 0 ? bearZone : false
+cLate  = biasDir > 0 ? notLateB : biasDir < 0 ? notLateS : false
+prog   = (cTrend?1:0)+(cChop?1:0)+(cSMMA?1:0)+(cZone?1:0)+(cLate?1:0)
+allGo  = cTrend and cChop and cSMMA and cZone and cLate
+
+statusTxt = allGo ? (biasDir>0?"BUY FORMING":"SELL FORMING") : biasDir==0 ? "NO BIAS (mixed)" : not cChop ? "NO-TRADE (chop)" : "WAITING (" + str.tostring(5-prog) + " left)"
+statusCol = allGo ? (biasDir>0?cGrn:cRed) : (biasDir==0 or not cChop) ? cRed : cGold
+
+// ---- top-level helpers (Pine requires functions at global scope) ----
+biasTxt(d) => d>0 ? "BULL" : d<0 ? "BEAR" : "FLAT"
+biasClr(d) => d>0 ? cGrn : d<0 ? cRed : cDim
+mark(b)    => b ? "✓" : "✗"
+markClr(b) => b ? cGrn : cRed
+sgn(x)     => (x>=0?"+":"") + str.tostring(x, "0.0")
+
+var table dash = na
+hcell(r, t) =>
+    table.cell(dash, 0, r, t,  text_color=cGold, bgcolor=cHdr, text_halign=text.align_left,  text_size=_sz)
+    table.cell(dash, 1, r, "", bgcolor=cHdr, text_size=_sz)
+kv(r, k, v, vc) =>
+    table.cell(dash, 0, r, k, text_color=cDim, text_halign=text.align_left,  text_size=_sz)
+    table.cell(dash, 1, r, v, text_color=vc,  text_halign=text.align_right, text_size=_sz)
+
+if showDash and barstate.islast
+    if na(dash)
+        dash := table.new(_pos, 2, 22, bgcolor=cBg, border_color=color.new(#2a3340,0), border_width=1, frame_color=cGold, frame_width=1)
+
+    table.cell(dash, 0, 0, "PRICE ZONES",      text_color=cGold, bgcolor=cHdr, text_halign=text.align_left,  text_size=_sz)
+    table.cell(dash, 1, 0, "MARKET STATE", text_color=cDim,  bgcolor=cHdr, text_halign=text.align_right, text_size=_sz)
+
+    hcell(1, "TREND BIAS")
+    kv(2, "15m", biasTxt(dir15), biasClr(dir15))
+    kv(3, "1H",  biasTxt(dir1H), biasClr(dir1H))
+    kv(4, "4H",  biasTxt(dir4H), biasClr(dir4H))
+    kv(5, "Verdict", htfUp?"LONGS ONLY":htfDown?"SHORTS ONLY":"MIXED", htfUp?cGrn:htfDown?cRed:cDim)
+
+    hcell(6, "CHOP FILTER")
+    kv(7, "CHOP", (na(chop)?"n/a":str.tostring(chop,"0.0")) + (chopRising?"  ↑":"  ↓"), na(chop)?cDim:(chop>=chopThresh or chopRising)?cRed:cGrn)
+    kv(8, "State", chopOK?"TRADEABLE":"NO-TRADE", chopOK?cGrn:cRed)
+
+    hcell(9, "PRICE ZONE")
+    kv(10, "Active", str.tostring(actLo, format.mintick) + " / " + str.tostring(actUp, format.mintick), cTxt)
+    kv(11, "Px vs line", sgn(pxVsLine), math.abs(pxVsLine)<=lateMax?cGrn:cRed)
+    kv(12, "Px vs SMMA", sgn(pxVsSMMA), cTxt)
+
+    hcell(13, "SETUP CHECKLIST")
+    kv(14, "Bias dir", biasDir>0?"LONG":biasDir<0?"SHORT":"—", biasDir>0?cGrn:biasDir<0?cRed:cDim)
+    kv(15, "Trend align", mark(cTrend), markClr(cTrend))
+    kv(16, "CHOP ok",     mark(cChop),  markClr(cChop))
+    kv(17, "SMMA retest", mark(cSMMA),  markClr(cSMMA))
+    kv(18, "Zone retest", mark(cZone),  markClr(cZone))
+    kv(19, "Not late",    mark(cLate),  markClr(cLate))
+    kv(20, "Progress", str.tostring(prog) + " / 5", prog>=4?cGrn:prog>=2?cGold:cDim)
+
+    table.cell(dash, 0, 21, "STATUS",   text_color=cTxt, bgcolor=cHdr, text_halign=text.align_left,  text_size=_sz)
+    table.cell(dash, 1, 21, statusTxt,  text_color=statusCol, bgcolor=cHdr, text_halign=text.align_right, text_size=_sz)
+
+// ================= ENTRY NOTIFICATIONS (append-only, signal logic untouched) =================
+// Reads the SAME five conditions as the BUY/SELL markers above. Nothing above this line changed.
+grpA = "Entry Notifications"
+alertOn    = input.bool(true, "Enable entry notifications", group=grpA)
+alertTF    = input.timeframe("120", "Notify only on this timeframe", group=grpA)
+lockTF     = input.bool(true, "Block alerts on any other chart timeframe", group=grpA)
+slOffsetA  = input.float(11.2, "SL offset beyond far zone line (points)", minval=0, group=grpA)
+acctSize   = input.float(10000, "Account size (for lot suggestion)", minval=0, group=grpA)
+riskPctA   = input.float(1.0, "Risk % per trade", minval=0, group=grpA)
+contractSz = input.float(100, "Contract size (oz per 1.00 lot)", minval=1, group=grpA)
+
+// identical to buySignal / sellSignal, minus the showSignals display toggle
+rawBuy  = htfUp   and bullMA and bullZone and notLateB and chopOK
+rawSell = htfDown and bearMA and bearZone and notLateS and chopOK
+
+tfMatch   = timeframe.period == alertTF
+tfAllowed = not lockTF or tfMatch
+
+tfName(tf) =>
+    tf == "60" ? "1H" : tf == "120" ? "2H" : tf == "240" ? "4H" : tf == "15" ? "15m" : tf == "30" ? "30m" : tf
+
+fmtPx(x) => str.tostring(x, format.mintick)
+
+lotsFor(slDist) =>
+    riskMoney = acctSize * riskPctA / 100.0
+    slDist > 0 ? math.floor(riskMoney / (slDist * contractSz) * 100.0) / 100.0 : 0.0
+
+if alertOn and tfAllowed and barstate.isconfirmed and (rawBuy or rawSell)
+    isBuy  = rawBuy
+    zoneLo = isBuy ? zLB : zLS
+    zoneUp = isBuy ? zUB : zUS
+    slPx   = isBuy ? zoneLo - slOffsetA : zoneUp + slOffsetA
+    slDist = math.abs(close - slPx)
+    lots   = lotsFor(slDist)
+    msg = "DPZ " + (isBuy ? "BUY" : "SELL") + " | " + syminfo.ticker + " " + tfName(timeframe.period) +
+          "\nEntry ~" + fmtPx(close) + " (bar close)" +
+          "\nZone " + fmtPx(zoneLo) + " / " + fmtPx(zoneUp) +
+          "\nSL " + fmtPx(slPx) + "  (" + str.tostring(slDist, "0.0") + " pts)" +
+          "\nLots " + str.tostring(lots, "0.00") + " @ " + str.tostring(riskPctA, "0.0#") + "% of " + str.tostring(acctSize, "0") +
+          "\nExit: trail the move, no fixed TP"
+    alert(msg, alert.freq_once_per_bar_close)
+
+// small status badge so you can confirm the alert engine is armed on this chart
+var table alertBadge = table.new(position.bottom_right, 1, 1, bgcolor=color.new(#12161c, 0), frame_color=color.new(#d4af37, 0), frame_width=1)
+if barstate.islast
+    armed = alertOn and tfAllowed
+    badge = not alertOn ? "ALERTS OFF" : armed ? "ALERTS ARMED  " + tfName(timeframe.period) : "ALERTS IDLE  chart " + tfName(timeframe.period) + " / set " + tfName(alertTF)
+    table.cell(alertBadge, 0, 0, badge, text_color = armed ? color.new(#26a69a, 0) : color.new(#ef5350, 0), text_size=size.small)
